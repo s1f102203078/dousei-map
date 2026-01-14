@@ -3,3 +3,4 @@ folium
 geopy
 gunicorn
 psycopg2-binary
+requests
