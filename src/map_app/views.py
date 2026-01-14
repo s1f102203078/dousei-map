@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse
 from django.core.cache import cache # <--- ★記憶するための道具
-from .models import Property
+from .models import Property, Station
 from .forms import PropertyForm
 import folium
 from geopy.geocoders import Nominatim
@@ -10,66 +10,66 @@ import requests
 import json
 
 def map_view(request):
+    # 初期位置（新宿あたり）
     m = folium.Map(location=[35.6909, 139.7005], zoom_start=13)
     
-    # ---------------------------------------------------------
-    # ★ OpenRouteService (徒歩圏エリア) の取得ロジック
-    # ---------------------------------------------------------
-    API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjQwOTZjMDE0OTBjZDQxMmViNzEyYTRhMTAwZjVjYjNjIiwiaCI6Im11cm11cjY0In0=' 
-    target_station = [139.7005, 35.6909] # 新宿駅
+    # 登録されている全駅を取得（チェックボックス表示用）
+    all_stations = Station.objects.all()
     
-    # キャッシュのキー（名前）を決める
-    cache_key = 'isochrone_shinjuku_15min'
-    
-    # ★ここが高速化の魔法！
-    # 「まずは記憶(cache)を探して、なければAPIを叩いて記憶する」という命令
-    area_data = cache.get(cache_key)
+    # ユーザーがチェックした駅のIDリストを取得（例: ['1', '3']）
+    # 何も選ばれていなければ空っぽ
+    selected_ids = request.GET.getlist('stations')
 
-    if not area_data:
-        # 記憶になかった場合だけ、APIを叩きに行く（重い処理）
-        print("🌍 新しいデータをAPIに取りに行きます...")
-        body = {
-            "locations": [target_station],
-            "range": [900], # 900秒 = 15分
-            "range_type": "time",
-            "attributes": ["area"],
-            "area_units": "m"
-        }
-        headers = {
-            "Accept": "application/json, application/geo+json",
-            "Authorization": API_KEY,
-            "Content-Type": "application/json; charset=utf-8"
-        }
-        try:
-            call = requests.post(
-                'https://api.openrouteservice.org/v2/isochrones/foot-walking',
-                json=body,
-                headers=headers
-            )
-            if call.status_code == 200:
-                area_data = call.json()
-                # 結果をキャッシュに保存（86400秒 = 24時間）
-                cache.set(cache_key, area_data, 86400)
-                print("💾 データをキャッシュに保存しました")
-            else:
-                print(f"API Error: {call.text}")
-        except Exception as e:
-            print(f"Connection Error: {e}")
-    else:
-        print("⚡ キャッシュからデータを読み込みました（爆速）")
+    # APIキー（ここだけ貼り直してください！）
+    API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjQwOTZjMDE0OTBjZDQxMmViNzEyYTRhMTAwZjVjYjNjIiwiaCI6Im11cm11cjY0In0='
 
-    # データがあれば地図に描画
-    if area_data:
-        folium.GeoJson(
-            area_data,
-            name='徒歩15分圏内',
-            style_function=lambda x: {
-                'fillColor': '#00ff00', 
-                'color': '#00ff00',
-                'weight': 1,
-                'fillOpacity': 0.15 # ちょっと薄くして見やすく
-            }
-        ).add_to(m)
+    # チェックされた駅の数だけループしてエリアを描画
+    for station in all_stations:
+        # この駅がチェックされているか？（文字列として比較）
+        if str(station.id) in selected_ids:
+            
+            # --- ここからいつものAPIロジック ---
+            cache_key = f'isochrone_station_{station.id}_15min' # IDごとにキャッシュを分ける
+            area_data = cache.get(cache_key)
+
+            if not area_data:
+                print(f"🌍 {station.name} のデータをAPIに取りに行きます...")
+                body = {
+                    "locations": [[station.longitude, station.latitude]], # geopyと逆順注意
+                    "range": [900], 
+                    "range_type": "time",
+                    "attributes": ["area"],
+                    "area_units": "m"
+                }
+                headers = {
+                    "Accept": "application/json, application/geo+json",
+                    "Authorization": API_KEY,
+                    "Content-Type": "application/json; charset=utf-8"
+                }
+                try:
+                    call = requests.post(
+                        'https://api.openrouteservice.org/v2/isochrones/foot-walking',
+                        json=body,
+                        headers=headers
+                    )
+                    if call.status_code == 200:
+                        area_data = call.json()
+                        cache.set(cache_key, area_data, 86400)
+                except Exception as e:
+                    print(f"Error: {e}")
+
+            # 描画（色は緑で統一し、重なると濃くなるようにOpacity調整）
+            if area_data:
+                folium.GeoJson(
+                    area_data,
+                    name=f'{station.name} 15分圏内',
+                    style_function=lambda x: {
+                        'fillColor': '#00ff00', 
+                        'color': '#00ff00',
+                        'weight': 1,
+                        'fillOpacity': 0.15 # 重なると濃くなって綺麗です
+                    }
+                ).add_to(m)
 
     # ---------------------------------------------------------
 
@@ -122,8 +122,13 @@ def map_view(request):
             icon=folium.Icon(color=icon_color, icon=icon_icon, prefix='fa')
         ).add_to(m)
 
-    m = m._repr_html_()
-    return render(request, 'map_app/index.html', {'map_data': m})
+    # テンプレートに渡すデータに「全駅」と「選択されたID」を追加
+    context = {
+        'map_data': m._repr_html_(),
+        'all_stations': all_stations,
+        'selected_ids': selected_ids
+    }
+    return render(request, 'map_app/index.html', context)
 
 # 登録・いいね機能はそのまま
 def add_property(request):
