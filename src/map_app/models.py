@@ -17,3 +17,12 @@ class Property(models.Model):
     def is_matched(self):
         """2人以上がいいねしているかチェックする"""
         return self.likes.count() >= 2
+    
+
+class Station(models.Model):
+    name = models.CharField(max_length=100)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+
+    def __str__(self):
+        return self.name
