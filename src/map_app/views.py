@@ -13,9 +13,15 @@ import json
 # メイン画面：地図と到達圏の表示
 # ---------------------------------------------------------
 def map_view(request):
-    # 初期位置（新宿あたり）
-    m = folium.Map(location=[35.6909, 139.7005], zoom_start=13)
+    # ★ここが変わります！
+    # 1. まず「台紙」を作る（これが画面いっぱいになる）
+    f = folium.Figure(height='100%')
     
+    # 2. 地図を作り、台紙に貼り付ける (.add_to(f))
+    m = folium.Map(location=[35.6909, 139.7005], zoom_start=13).add_to(f)
+
+    # 登録されている全駅を取得
+    all_stations = Station.objects.all()
     # 登録されている全駅を取得
     all_stations = Station.objects.all()
     
@@ -133,7 +139,7 @@ def map_view(request):
         ).add_to(m)
 
     context = {
-        'map_data': m._repr_html_(),
+        'map_data': f._repr_html_(),
         'all_stations': all_stations,
         'selected_ids': selected_ids
     }
