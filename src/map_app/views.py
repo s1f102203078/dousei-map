@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse
 from django.core.cache import cache
 from .models import Property, Station, MapGroup, UserProfile
-from .forms import PropertyForm, MapGroupForm
+from .forms import PropertyForm, MapGroupForm, StationForm
 from django.contrib.auth.decorators import login_required
 import folium
 from geopy.geocoders import Nominatim
@@ -220,6 +220,82 @@ def add_property(request):
     else:
         form = PropertyForm()
     return render(request, 'map_app/add_property.html', {'form': form})
+
+# ---------------------------------------------------------
+# 駅の追加（＆APIデータの先読み保存）
+# ---------------------------------------------------------
+@login_required
+def add_station(request):
+    if request.method == 'POST':
+        form = StationForm(request.POST)
+        if form.is_valid():
+            station = form.save(commit=False)
+            
+            # 1. グループをセット
+            if hasattr(request.user, 'profile') and request.user.profile.group:
+                station.group = request.user.profile.group
+            else:
+                return redirect('group_setup')
+
+            # 2. 駅名から座標を検索 (Geocoding)
+            geolocator = Nominatim(user_agent="dousei_app_v1")
+            try:
+                # "駅" がついてなかったらつける（検索精度アップのため）
+                search_name = station.name
+                if not search_name.endswith('駅'):
+                    search_name += '駅'
+                
+                location = geolocator.geocode(search_name)
+                
+                if location:
+                    station.latitude = location.latitude
+                    station.longitude = location.longitude
+                    station.save() # ここでIDが確定する
+
+                    # 3. ★ここが高速化のキモ！
+                    # 登録したついでに、裏でAPIを叩いて到達圏データをキャッシュしておく
+                    # (次に地図を開いたときは爆速で表示される)
+                    print(f"🚀 {station.name} のデータを先読み中...")
+                    
+                    API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjQwOTZjMDE0OTBjZDQxMmViNzEyYTRhMTAwZjVjYjNjIiwiaCI6Im11cm11cjY0In0='
+                    body = {
+                        "locations": [[station.longitude, station.latitude]],
+                        "range": [300, 600, 900],
+                        "range_type": "time",
+                        "attributes": ["area"],
+                        "area_units": "m"
+                    }
+                    headers = {
+                        "Accept": "application/json, application/geo+json",
+                        "Authorization": API_KEY,
+                        "Content-Type": "application/json; charset=utf-8"
+                    }
+                    
+                    try:
+                        call = requests.post(
+                            'https://api.openrouteservice.org/v2/isochrones/foot-walking',
+                            json=body, headers=headers
+                        )
+                        if call.status_code == 200:
+                            area_data = call.json()
+                            # キャッシュに保存
+                            cache_key = f'isochrone_station_{station.id}_gradated'
+                            cache.set(cache_key, area_data, 86400 * 30) # 30日間保存
+                            print("✅ 先読み完了！")
+                    except Exception as e:
+                        print(f"API Error: {e}")
+
+                    return redirect('index')
+                else:
+                    form.add_error('name', '場所が見つかりませんでした。')
+            except Exception as e:
+                print(e)
+                form.add_error(None, 'エラーが発生しました。')
+                
+    else:
+        form = StationForm()
+    
+    return render(request, 'map_app/add_station.html', {'form': form})
 
 # ---------------------------------------------------------
 # いいね機能
