@@ -1,5 +1,5 @@
 from django import forms
-from .models import Property, MapGroup
+from .models import Property, MapGroup, Station
 
 class PropertyForm(forms.ModelForm):
     class Meta:
@@ -22,4 +22,15 @@ class MapGroupForm(forms.ModelForm):
         widgets = {
             'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': '例：佐藤・鈴木ペア'}),
             'password': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'パートナーと共有する合言葉'}),
+        }
+
+class StationForm(forms.ModelForm):
+    class Meta:
+        model = Station
+        fields = ['name'] # ユーザーに入力させるのは駅名だけ
+        labels = {
+            'name': '駅名',
+        }
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': '例：新宿'}),
         }
