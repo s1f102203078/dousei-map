@@ -13,15 +13,10 @@ import json
 # メイン画面：地図と到達圏の表示
 # ---------------------------------------------------------
 def map_view(request):
-    # ★ここが変わります！
-    # 1. まず「台紙」を作る（これが画面いっぱいになる）
-    f = folium.Figure(height='100%')
-    
-    # 2. 地図を作り、台紙に貼り付ける (.add_to(f))
-    m = folium.Map(location=[35.6909, 139.7005], zoom_start=13).add_to(f)
+    # ★修正1: Figure(台紙)はやめて、普通のMapに戻す
+    # .add_to(m) は不要です
+    m = folium.Map(location=[35.6909, 139.7005], zoom_start=13, height='100%')
 
-    # 登録されている全駅を取得
-    all_stations = Station.objects.all()
     # 登録されている全駅を取得
     all_stations = Station.objects.all()
     
@@ -34,7 +29,7 @@ def map_view(request):
     for station in all_stations:
         if str(station.id) in selected_ids:
             
-            # キャッシュキー（グラデーション用に名前を変更）
+            # キャッシュキー
             cache_key = f'isochrone_station_{station.id}_gradated' 
             
             area_data = cache.get(cache_key)
@@ -50,7 +45,6 @@ def map_view(request):
                     "area_units": "m"
                 }
 
-                # APIキーを設定したヘッダー（ここが消えていたので復活！）
                 headers = {
                     "Accept": "application/json, application/geo+json",
                     "Authorization": API_KEY,
@@ -77,14 +71,13 @@ def map_view(request):
                     name=f'{station.name} 到達圏',
                     style_function=lambda feature: {
                         'fillColor': '#00ff00', 
-                        'color': '#00ff00',    
+                        'color': '#00ff00',     
                         'weight': 1,
-                        # 濃さの調整: 5分(300s)→0.4, 10分(600s)→0.2, 15分→0.1
                         'fillOpacity': 0.4 if feature['properties']['value'] == 300 else \
                                        0.2 if feature['properties']['value'] == 600 else \
                                        0.1 
                     }
-                ).add_to(m)
+                ).add_to(m) # 地図mに追加
 
     # ---------------------------------------------------------
     # 物件ピンの表示
@@ -111,10 +104,12 @@ def map_view(request):
                 text = "❤️ いいね！"
                 btn_class = "btn-danger"
             
+            # iframeじゃなくなるので parent.toggleLike ではなく window.toggleLike で呼べるようになりますが
+            # 安全のためコードはそのままにしておきます（どちらでも動くことが多いです）
             like_btn_html = f"""
                 <div style="margin-top:10px; text-align:center;">
                     <a href="#" 
-                       onclick="parent.toggleLike('/like/{prop.id}/'); return false;"
+                       onclick="toggleLike('/like/{prop.id}/'); return false;"
                        class="btn {btn_class} btn-sm" 
                        style="color:white; text-decoration:none;">
                         {text}
@@ -136,10 +131,18 @@ def map_view(request):
             popup=popup,
             tooltip=prop.name,
             icon=folium.Icon(color=icon_color, icon=icon_icon, prefix='fa')
-        ).add_to(m)
+        ).add_to(m) # 地図mに追加
+
+    # ★修正2: 地図をパーツ分解して渡す（iframe対策）
+    figure = m.get_root()
+    figure.render() # 必須！これがないと中身が空になります
 
     context = {
-        'map_data': f._repr_html_(),
+        # map_data は削除
+        'map_header': figure.header.render(), # CSS
+        'map_body':   figure.html.render(),   # HTML(div)
+        'map_script': figure.script.render(), # JS
+        
         'all_stations': all_stations,
         'selected_ids': selected_ids
     }
@@ -169,7 +172,7 @@ def add_property(request):
     return render(request, 'map_app/add_property.html', {'form': form})
 
 # ---------------------------------------------------------
-# いいね機能（Ajax用）
+# いいね機能
 # ---------------------------------------------------------
 def toggle_like(request, property_id):
     prop = get_object_or_404(Property, pk=property_id)
