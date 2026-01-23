@@ -24,13 +24,11 @@ class MapGroupForm(forms.ModelForm):
             'password': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'パートナーと共有する合言葉'}),
         }
 
-class StationForm(forms.ModelForm):
+class StationSelectionForm(forms.ModelForm):
     class Meta:
-        model = Station
-        fields = ['name'] # ユーザーに入力させるのは駅名だけ
-        labels = {
-            'name': '駅名',
-        }
+        model = MapGroup
+        fields = ['selected_stations']
+        # チェックボックスで複数選択できるウィジェットを使います
         widgets = {
-            'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': '例：新宿'}),
+            'selected_stations': forms.CheckboxSelectMultiple(),
         }
