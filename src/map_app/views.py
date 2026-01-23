@@ -9,44 +9,53 @@ from geopy.geocoders import Nominatim
 import time
 import requests
 import json
+from django.views.decorators.http import require_POST
 
 # ---------------------------------------------------------
 # グループ選択（玄関）
 # ---------------------------------------------------------
 @login_required
 def group_setup(request):
-    # すでにグループに参加済みなら、トップ（地図）へ飛ばす
-    if hasattr(request.user, 'profile') and request.user.profile.group:
-        return redirect('index')
+    # すでにグループに参加している場合も、このページを表示させる
+    # (ただし、テンプレート側で表示内容を変える)
+    current_group = request.user.profile.group
 
     if request.method == 'POST':
-        form = MapGroupForm(request.POST)
-        action = request.POST.get('action') # 'create' か 'join' か
-
-        if form.is_valid():
-            name = form.cleaned_data['name']
-            password = form.cleaned_data['password']
-
-            if action == 'create':
-                # 新規作成
-                new_group = MapGroup.objects.create(name=name, password=password)
-                # プロフィールを作って紐付ける
-                UserProfile.objects.update_or_create(user=request.user, defaults={'group': new_group})
+        # --- ここから下のフォーム処理は以前と同じ ---
+        if 'create_group' in request.POST:
+            form = MapGroupForm(request.POST)
+            if form.is_valid():
+                group = form.save()
+                profile = request.user.profile
+                profile.group = group
+                profile.save()
                 return redirect('index')
-
-            elif action == 'join':
-                # 参加（合言葉の一致確認）
-                try:
-                    group = MapGroup.objects.get(name=name, password=password)
-                    UserProfile.objects.update_or_create(user=request.user, defaults={'group': group})
+        elif 'join_group' in request.POST:
+            group_name = request.POST.get('group_name')
+            password = request.POST.get('password')
+            try:
+                group = MapGroup.objects.get(name=group_name)
+                if group.password == password:
+                    profile = request.user.profile
+                    profile.group = group
+                    profile.save()
                     return redirect('index')
-                except MapGroup.DoesNotExist:
-                    form.add_error(None, "地図の名前か合言葉が間違っています")
-
-    else:
-        form = MapGroupForm()
-
-    return render(request, 'map_app/group_setup.html', {'form': form})
+                else:
+                    return render(request, 'map_app/group_setup.html', {
+                        'form': MapGroupForm(),
+                        'error': 'パスワードが間違っています'
+                    })
+            except MapGroup.DoesNotExist:
+                return render(request, 'map_app/group_setup.html', {
+                    'form': MapGroupForm(),
+                    'error': 'グループが見つかりません'
+                })
+    
+    # GETリクエスト時
+    return render(request, 'map_app/group_setup.html', {
+        'form': MapGroupForm(),
+        'current_group': current_group, # テンプレートで出し分けするために渡す
+    })
 
 # ---------------------------------------------------------
 # メイン画面：地図と到達圏の表示
@@ -113,34 +122,30 @@ def map_view(request):
 # ---------------------------------------------------------
 # 物件登録ページ
 # ---------------------------------------------------------
+# src/map_app/views.py の add_property 関数
+
+@login_required
 def add_property(request):
+    # グループに入っていない人は登録できないので弾く
+    if not request.user.profile.group:
+        return redirect('group_setup')
+
     if request.method == 'POST':
         form = PropertyForm(request.POST)
         if form.is_valid():
-            obj = form.save(commit=False)
-
-            # ログインユーザーのグループを自動セット
-            if hasattr(request.user, 'profile') and request.user.profile.group:
-                obj.group = request.user.profile.group
-            else:
-                # 万が一グループがない場合のエラー処理（本来ここには来ないはず）
-                return HttpResponse("エラー：グループに所属していません", status=400)
+            # まだDBには保存しない(commit=False)
+            property_obj = form.save(commit=False)
+            # ログインユーザーのグループを自動でセット
+            property_obj.group = request.user.profile.group
+            # 最後に保存
+            property_obj.save()
             
-            geolocator = Nominatim(user_agent="dousei_app_v1")
-            try:
-                location = geolocator.geocode(obj.address)
-                if location:
-                    obj.latitude = location.latitude
-                    obj.longitude = location.longitude
-                    obj.save()
-                    return HttpResponse('<script>window.location.href="/";</script>')
-            except Exception as e:
-                print(f"Error: {e}")
-            time.sleep(1)
+            # ★ここが重要！登録したら「地図ページ」に即座に戻る
+            return redirect('index')
     else:
         form = PropertyForm()
-    return render(request, 'map_app/add_property.html', {'form': form})
 
+    return render(request, 'map_app/add_property.html', {'form': form})
 # ---------------------------------------------------------
 # 駅の追加（＆APIデータの先読み保存）
 # ---------------------------------------------------------
@@ -183,3 +188,13 @@ def toggle_like(request, property_id):
         else:
             prop.likes.add(request.user)
     return HttpResponse("OK")
+
+@login_required
+@require_POST
+def leave_group(request):
+    """グループから抜ける処理"""
+    profile = request.user.profile
+    if profile.group:
+        profile.group = None
+        profile.save()
+    return redirect('group_setup')
