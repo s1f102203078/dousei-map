@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path('setup/', views.group_setup, name='group_setup'),
+    path('leave/', views.leave_group, name='leave_group'),
     path('', views.map_view, name='index'),
     path('add/', views.add_property, name='add_property'),
     path('like/<int:property_id>/', views.toggle_like, name='toggle_like'),
